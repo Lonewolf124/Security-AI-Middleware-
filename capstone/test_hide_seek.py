@@ -643,6 +643,23 @@ class HideSeekTest(VaultCase):
         self.assertIn("ghp_TESTmm4111111111111111aabb", masked)
         self.assertTrue(masked.endswith("."))
 
+    def test_profile_limits_what_is_masked(self):
+
+        hider = Hider(fake_detect, None, SECRET_PATTERNS, types={"PASSWORD", "AWS_TEST_KEY"})
+
+        masked, findings = hider.hide(
+            "Rahul Sharma uses hunter2!X and AKIA1234567890ABCDEF",
+            self.session(),
+        )
+
+        self.assertTrue(masked.startswith("Rahul Sharma uses "))
+        self.assertNotIn("hunter2!X", masked)
+        self.assertNotIn("AKIA1234567890ABCDEF", masked)
+        self.assertEqual(
+            sorted(f["type"] for f in findings),
+            ["AWS_TEST_KEY", "PASSWORD"],
+        )
+
     def test_unrelated_text_is_untouched(self):
 
         self.hide("Rahul Sharma, 1234 5678 9101")
@@ -1049,6 +1066,37 @@ MODEL_FILE = os.path.join(
 
 @unittest.skipUnless(os.path.exists(MODEL_FILE), "ONNX model not present")
 class RealModelTest(VaultCase):
+
+    def test_sensitivity_dial(self):
+
+        from dlp_engine.engine import pii_model
+        from hide_seek.detector import Detector
+
+        text = (
+            "Offboard contractor_mk and reset the login for Lakshmi, then "
+            "email rahul@example.com about ticket 4471."
+        )
+
+        def spans(sensitivity):
+            return {
+                (e["start"], e["end"], e["type"])
+                for e in Detector(pii_model, sensitivity).detect(text)
+            }
+
+        def covered(sensitivity):
+            return sum(end - start for start, end, _ in spans(sensitivity))
+
+        # The middle of the dial is the model's own choice.
+        self.assertEqual(
+            spans(0.5),
+            {(e["start"], e["end"], e["type"]) for e in pii_model.detect(text)}
+            | spans(0.5),
+        )
+
+        # Turning it up never masks less; turning it down never masks more.
+        self.assertLessEqual(covered(0.1), covered(0.5))
+        self.assertLessEqual(covered(0.5), covered(0.8))
+        self.assertLessEqual(covered(0.8), covered(1.0))
 
     def setUp(self):
 

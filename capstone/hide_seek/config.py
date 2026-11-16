@@ -64,3 +64,56 @@ MULTI_WORD_TYPES = frozenset({
 
 # Types whose values can begin or end with a symbol.
 SYMBOL_TYPES = frozenset({"PASSWORD", "API_KEY", "SECRET"})
+
+# How readily the model's doubts count as private data, 0.0 to 1.0.
+# 0.5 is the model's own choice; see detector.py.
+SENSITIVITY = float(os.environ.get("HAS_SENSITIVITY", "0.5"))
+
+# What to mask. A profile is a set of entity types; "all" masks everything
+# that is detected. Chosen with HAS_PROFILE, or a comma-separated list of
+# entity types in HAS_MASK_TYPES.
+PROFILES = {
+    "credentials": frozenset({
+        "PASSWORD", "API_KEY", "SECRET", "PRIVATE_KEY", "AWS_TEST_KEY",
+        "GITHUB_TEST_TOKEN",
+    }),
+    "financial": frozenset({
+        "CREDIT_CARD", "BANK_ACCOUNT", "IFSC", "UPI_ID", "GSTIN", "PAN_CARD",
+    }),
+    "government_id": frozenset({
+        "AADHAAR", "PAN_CARD", "PASSPORT", "DRIVER_LICENSE", "VOTER_ID",
+        "SSN", "VEHICLE_REG",
+    }),
+    "contact": frozenset({"PHONE", "EMAIL", "ADDRESS", "IP_ADDRESS"}),
+    "identity": frozenset({
+        "PERSON_NAME", "DATE_OF_BIRTH", "USERNAME", "ORG_NAME",
+    }),
+}
+
+
+def mask_types():
+    """The entity types to mask, or None for all of them."""
+
+    explicit = os.environ.get("HAS_MASK_TYPES", "").strip()
+
+    if explicit:
+        return frozenset(t.strip().upper() for t in explicit.split(",") if t.strip())
+
+    names = [
+        n.strip().lower()
+        for n in os.environ.get("HAS_PROFILE", "all").split("+")
+        if n.strip()
+    ]
+
+    if not names or "all" in names:
+        return None
+
+    unknown = [n for n in names if n not in PROFILES]
+
+    if unknown:
+        raise ValueError(
+            f"unknown HAS_PROFILE {unknown}; choose from "
+            f"{sorted(PROFILES)} joined with '+', or 'all'"
+        )
+
+    return frozenset().union(*(PROFILES[n] for n in names))

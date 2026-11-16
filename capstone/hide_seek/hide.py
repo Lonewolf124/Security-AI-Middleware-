@@ -76,6 +76,9 @@ def resolve_overlaps(spans):
     return sorted(kept, key=lambda s: s.start)
 
 
+DEFAULT = object()
+
+
 class Hider:
     """
     The Hide step: replace every private value in a text with a surrogate
@@ -87,27 +90,36 @@ class Hider:
     (entity_type, compiled regex) for credentials with a fixed format.
     """
 
-    def __init__(self, detect, tokenizer=None, secret_patterns=()):
+    def __init__(self, detect, tokenizer=None, secret_patterns=(), types=None):
 
         self._detect = detect
         self._tokenizer = tokenizer
         self._secret_patterns = list(secret_patterns)
 
+        # None masks every detected type; otherwise only these.
+        self._types = types
+
     @classmethod
-    def default(cls):
+    def default(cls, sensitivity=None, types=DEFAULT):
         """Build a Hider on the project's existing regex + ONNX detectors."""
 
         from dlp_engine.detectors import PATTERNS
         from dlp_engine.engine import pii_model
 
+        from .detector import Detector
+
+        if sensitivity is None:
+            sensitivity = config.SENSITIVITY
+
         return cls(
-            pii_model.detect,
+            Detector(pii_model, sensitivity).detect,
             pii_model.tokenizer,
             [
                 (rule["type"], rule["pattern"])
                 for rule in PATTERNS
                 if rule["type"] != "PRIVATE_KEY"
             ],
+            config.mask_types() if types is DEFAULT else types,
         )
 
     def hide(self, text, session):
@@ -133,6 +145,11 @@ class Hider:
 
         spans += self._detect_spans(text)
 
+        if self._types is not None:
+            spans = [span for span in spans if span.type in self._types]
+
+        # Values already masked in this chat stay masked whatever the
+        # current setting, or the same value would go out both ways.
         spans += [
             Span(start, end, entity_type, 0, surrogate)
             for start, end, (entity_type, surrogate)
