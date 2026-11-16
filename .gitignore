@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+**/onnx_quantized_all17/model_quantized.onnx
+*.log
+
+# Hide-and-Seek vault (encrypted mappings and their key)
+**/hide_seek/data/

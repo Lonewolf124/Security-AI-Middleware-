@@ -1,8 +1,12 @@
+import os
+
 import onnxruntime as ort
 from transformers import AutoTokenizer
 
 
-MODEL_DIR = r"F:\capstone\onnx_quantized_all17"
+# Resolve the model directory relative to this file so the project can be
+# moved between drives without editing any paths.
+MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 class PIIModel:
@@ -19,7 +23,7 @@ class PIIModel:
         print("[PII] Loading ONNX model...")
 
         self.session = ort.InferenceSession(
-            model_dir + r"\model_quantized.onnx",
+            os.path.join(model_dir, "model_quantized.onnx"),
             providers=["CPUExecutionProvider"]
         )
 
