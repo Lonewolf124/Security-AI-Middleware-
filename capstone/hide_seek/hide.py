@@ -1,9 +1,9 @@
 import re
-from dataclasses import dataclass
 
 from . import config
 from . import surrogates
 from .matching import issued_matcher, originals_matcher
+from .spans import Span, tidy_model_spans
 
 
 PRIVATE_KEY_BLOCK = re.compile(
@@ -15,8 +15,11 @@ PRIVATE_KEY_BLOCK = re.compile(
 
 PRIVATE_KEY_HEADER = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
 
-AADHAAR_LIKE = re.compile(r"(?<![\d.])[2-9]\d{3}[\s-]?\d{4}[\s-]?\d{4}(?![\d.])")
-CARD_LIKE = re.compile(r"(?<![\d.])\d(?:[ -]?\d){12,18}(?![\d.])")
+# A number counts only when it stands alone, not as part of a longer token.
+AADHAAR_LIKE = re.compile(
+    r"(?<![\w.])[2-9]\d{3}[\s-]?\d{4}[\s-]?\d{4}(?!\w)(?!\.\d)"
+)
+CARD_LIKE = re.compile(r"(?<![\w.])\d(?:[ -]?\d){12,18}(?!\w)(?!\.\d)")
 
 _VERHOEFF_D = [
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
@@ -58,19 +61,6 @@ def luhn_ok(digits):
         total += digit
 
     return total % 10 == 0
-
-
-@dataclass(frozen=True)
-class Span:
-    start: int
-    end: int
-    type: str
-    # Higher wins an overlap; equal priority goes to the longer span.
-    priority: int = 0
-    surrogate: str = None
-
-    def __len__(self):
-        return self.end - self.start
 
 
 def resolve_overlaps(spans):
@@ -239,7 +229,7 @@ class Hider:
                 if end > start:
                     spans.append(Span(start, end, entity["type"]))
 
-        return spans
+        return tidy_model_spans(text, spans)
 
     def _windows(self, text):
 

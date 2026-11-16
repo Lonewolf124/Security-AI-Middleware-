@@ -20,7 +20,7 @@ from mitmproxy import http
 from mitmproxy.test import tflow, tutils
 
 from hide_seek import surrogates
-from hide_seek.hide import Hider, luhn_ok, verhoeff_ok
+from hide_seek.hide import Hider, Span, luhn_ok, tidy_model_spans, verhoeff_ok
 from hide_seek.proxy import HideSeekAddon
 from hide_seek.seek import SSERestorer, StreamRestorer, restore
 from hide_seek.vault import Vault
@@ -332,12 +332,156 @@ class SurrogateTest(VaultCase):
         self.assertNotIn("corp", first)
         self.assertTrue(first.endswith(".in"))
 
+    def test_new_label_generators(self):
+
+        session = self.session()
+
+        for entity_type, value in [
+            ("BANK_ACCOUNT", "50100234567891"),
+            ("GSTIN", "27ABCDE1234F1Z5"),
+            ("VOTER_ID", "ABC1234567"),
+        ]:
+            self.check_shape(value, surrogates.generate(entity_type, value, session))
+
+        fake = surrogates.generate("IFSC", "HDFC0001234", session)
+
+        self.check_shape("HDFC0001234", fake)
+        self.assertEqual(fake[4], "0")
+
+        fake = surrogates.generate(
+            "SECRET",
+            "postgres://app_user:S3cretPw@db.internal:5432/orders",
+            session,
+        )
+
+        self.assertTrue(fake.startswith("postgres://"))
+        self.assertNotIn("S3cretPw", fake)
+        self.assertRegex(fake, r"^postgres://\w+:\w+@\w+\.\w+:\d{4}/\w+$")
+
+        fake = surrogates.generate("ORG_NAME", "Sharma Textiles Pvt Ltd", session)
+
+        self.assertTrue(fake.endswith(" Textiles Pvt Ltd"))
+        self.assertNotIn("Sharma", fake)
+
     def test_checksums(self):
 
         self.assertTrue(verhoeff_ok("234123412346"))
         self.assertFalse(verhoeff_ok("123456789101"))
         self.assertTrue(luhn_ok("4111111111111111"))
         self.assertFalse(luhn_ok("4111111111111112"))
+
+
+class TidySpansTest(unittest.TestCase):
+
+    def tidy(self, text, *pieces):
+
+        spans = []
+
+        for fragment, entity_type in pieces:
+            start = text.index(fragment)
+            spans.append(Span(start, start + len(fragment), entity_type))
+
+        return [
+            (text[s.start:s.end], s.type) for s in tidy_model_spans(text, spans)
+        ]
+
+    def test_fragment_grows_to_the_whole_token(self):
+
+        self.assertEqual(
+            self.tidy("licence MH12 20110012345.", ("MH", "DRIVER_LICENSE")),
+            [("MH12", "DRIVER_LICENSE")],
+        )
+
+    def test_touching_pieces_become_one_value(self):
+
+        self.assertEqual(
+            self.tidy("Is Z1234567 valid", ("Z", "PAN_CARD"), ("1234567", "PASSPORT")),
+            [("Z1234567", "PASSPORT")],
+        )
+        self.assertEqual(
+            self.tidy("with Str0ngPass!99 to", ("Str0ngPass", "PASSWORD"), ("99", "IP_ADDRESS")),
+            [("Str0ngPass!99", "PASSWORD")],
+        )
+        self.assertEqual(
+            self.tidy("admin_ops now", ("admin_", "PASSWORD"), ("s", "PASSWORD")),
+            [("admin_ops", "PASSWORD")],
+        )
+
+    def test_same_type_pieces_join_across_one_space(self):
+
+        self.assertEqual(
+            self.tidy("or +1 415 555 0132.", ("+", "PHONE"), ("415 555 0132", "PHONE")),
+            [("+1 415 555 0132", "PHONE")],
+        )
+        self.assertEqual(
+            self.tidy("Rahul Sharma 9876", ("Rahul", "PERSON_NAME"), ("9876", "PHONE")),
+            [("Rahul", "PERSON_NAME"), ("9876", "PHONE")],
+        )
+
+    def test_stray_fragments_are_dropped(self):
+
+        self.assertEqual(self.tidy("between a B-tree", ("a", "EMAIL")), [])
+        self.assertEqual(self.tidy("against LDAP. List", ("L", "PASSWORD")), [])
+        self.assertEqual(
+            self.tidy("AWS credential:", ("c", "PHONE"), ("red", "API_KEY")),
+            [],
+        )
+
+    def test_two_values_labelled_as_one_are_separated(self):
+
+        self.assertEqual(
+            self.tidy(
+                "between 192.0.2.1 and 198.51.100.1.",
+                ("192.0.2.1 and 198.51.100", "IP_ADDRESS"),
+            ),
+            [("192.0.2.1", "IP_ADDRESS"), ("198.51.100.1", "IP_ADDRESS")],
+        )
+
+    def test_attached_punctuation_is_cut(self):
+
+        self.assertEqual(
+            self.tidy(
+                "the list. alice@example.com should",
+                (". alice@example.com", "EMAIL"),
+            ),
+            [("alice@example.com", "EMAIL")],
+        )
+        self.assertEqual(
+            self.tidy(
+                "key to 192.0.2.8:\n-----BEGIN",
+                ("192.0.2.8:\n-----", "IP_ADDRESS"),
+            ),
+            [("192.0.2.8", "IP_ADDRESS")],
+        )
+        self.assertEqual(
+            self.tidy(
+                "credentials localsvc / Summer@2026!. Explain",
+                ("localsvc /", "PASSWORD"),
+            ),
+            [("localsvc", "PASSWORD")],
+        )
+        self.assertEqual(
+            self.tidy("is Summer@2026!. Explain", ("Summer@2026!.", "PASSWORD")),
+            [("Summer@2026!", "PASSWORD")],
+        )
+
+    def test_short_prefix_joins_the_value_after_it(self):
+
+        self.assertEqual(
+            self.tidy(
+                "vehicle DL 3C AB 4567, contact",
+                ("DL", "PAN_CARD"),
+                ("3C AB 4567", "VEHICLE_REG"),
+            ),
+            [("DL 3C AB 4567", "VEHICLE_REG")],
+        )
+
+    def test_indic_marks_stay_inside_the_token(self):
+
+        self.assertEqual(
+            self.tidy("नाम सीमा है", ("सीम", "PERSON_NAME")),
+            [("सीमा", "PERSON_NAME")],
+        )
 
 
 class HideSeekTest(VaultCase):
@@ -469,6 +613,35 @@ class HideSeekTest(VaultCase):
 
         # And it stays stable on later turns.
         self.assertEqual(self.hide(f"Call {first} and Rahul"), f"Call {other} and {first}")
+
+    def test_values_that_cannot_be_respaced_still_round_trip(self):
+
+        session = self.session()
+
+        # A placeholder, a value with other punctuation, and another script,
+        # all under types that are normally matched separator-insensitively.
+        session.assign("PHONE", "SSN", lambda: None)
+        session.assign("PHONE", "sk_test_4242TESTkey", lambda: "sk_test_9911ABCDxyz")
+        session.assign("AADHAAR", "नंबर 4512 7890", lambda: "नंबर 2606 6816")
+
+        fakes = "[PHONE_1] / sk_test_9911ABCDxyz / नंबर 2606 6816"
+
+        self.assertEqual(
+            restore(fakes, session)[0],
+            "SSN / sk_test_4242TESTkey / नंबर 4512 7890",
+        )
+
+    def test_digits_inside_a_longer_token_are_not_a_card_number(self):
+
+        hider = Hider(lambda text: [], None, ())
+
+        text = "token ghp_TESTmm4111111111111111aabb and card 4111111111111111."
+
+        masked, findings = hider.hide(text, self.session())
+
+        self.assertEqual([f["type"] for f in findings], ["CREDIT_CARD"])
+        self.assertIn("ghp_TESTmm4111111111111111aabb", masked)
+        self.assertTrue(masked.endswith("."))
 
     def test_unrelated_text_is_untouched(self):
 

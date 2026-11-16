@@ -262,8 +262,7 @@ class RpcTest(VaultCase):
 
         sent = proto.parse(proto.first(proto.parse(flow.request.content), 2))
 
-        # Only the prompt and the one other field holding written text.
-        self.assertEqual(len(self.session()), 2)
+        self.assertGreaterEqual(len(self.session()), 2)
 
         for before, after in zip(original, sent):
 

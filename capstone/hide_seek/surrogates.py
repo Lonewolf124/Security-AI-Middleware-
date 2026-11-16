@@ -50,6 +50,23 @@ DOMAIN_WORDS = [
     "larkspur", "westbrook", "fairhaven", "oakridge", "pinecrest",
 ]
 
+ORG_WORDS = [
+    "Northfield", "Bluepeak", "Lumen", "Greyharbor", "Sunvale", "Novaline",
+    "Redmaple", "Quillstone", "Ironbridge", "Clearwater", "Eastgate",
+    "Silveroak", "Brightpath", "Stonemill", "Highmeadow", "Larkspur",
+    "Westbrook", "Fairhaven", "Oakridge", "Pinecrest", "Meridian", "Altura",
+]
+
+# Kept as they are, so the fake still reads as the same kind of organisation.
+ORG_SUFFIXES = frozenset({
+    "pvt", "private", "ltd", "limited", "llp", "inc", "corp", "corporation",
+    "co", "company", "and", "of", "the", "bank", "hospital", "hospitals",
+    "school", "college", "university", "industries", "technologies",
+    "solutions", "services", "systems", "finserv", "finance", "logistics",
+    "textiles", "infra", "enterprises", "group", "associates", "consultants",
+    "labs", "clinic", "pharma", "foods", "motors", "traders", "stores",
+})
+
 HONORIFICS = frozenset({
     "mr", "mrs", "ms", "miss", "mx", "dr", "prof", "shri", "sri", "smt", "er",
 })
@@ -381,7 +398,48 @@ def secret(value, session):
         if value.startswith(prefix):
             return shape(value, keep=len(prefix))
 
+    # A connection string keeps its scheme, so it still reads as one.
+    scheme = re.match(r"[A-Za-z][A-Za-z0-9+.-]*://", value)
+
+    if scheme:
+        return shape(value, keep=scheme.end())
+
     return shape(value)
+
+
+def ifsc(value, session):
+
+    # The fifth character of an IFSC is always zero.
+    if len(value) == 11 and value[4] == "0":
+        return shape(value[:4]) + "0" + shape(value[5:])
+
+    return shape(value)
+
+
+def org_name(value, session):
+
+    out = []
+    replaced = False
+
+    for token in re.split(r"(\s+)", value):
+
+        core = token.strip(".,&()")
+
+        if (
+            not core
+            or token.isspace()
+            or core.lower() in ORG_SUFFIXES
+            or not any(char.isalpha() for char in core)
+        ):
+            out.append(token)
+            continue
+
+        fake = _rng.choice(ORG_WORDS)
+
+        out.append(token.replace(core, _match_case(fake, core), 1))
+        replaced = True
+
+    return "".join(out) if replaced else shape(value)
 
 
 def private_key(value, session):
@@ -412,6 +470,12 @@ GENERATORS = {
     "AWS_TEST_KEY": secret,
     "GITHUB_TEST_TOKEN": secret,
     "PRIVATE_KEY": private_key,
+    "SECRET": secret,
+    "BANK_ACCOUNT": lambda value, session: shape(value),
+    "IFSC": ifsc,
+    "GSTIN": lambda value, session: shape(value),
+    "VOTER_ID": lambda value, session: shape(value),
+    "ORG_NAME": org_name,
 }
 
 

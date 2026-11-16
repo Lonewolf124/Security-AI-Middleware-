@@ -37,8 +37,30 @@ SEPARABLE_TYPES = frozenset({
     "PASSPORT",
     "DRIVER_LICENSE",
     "VEHICLE_REG",
+    "BANK_ACCOUNT",
+    "IFSC",
+    "GSTIN",
+    "VOTER_ID",
 })
 
 # The reply stream is held back while its tail could still turn into a
 # surrogate. Beyond this many characters it is released as it is.
 MAX_STREAM_HOLD = 8192
+
+# Types whose values can contain spaces. A model detection of any other
+# type that covers several words is treated as several values.
+MULTI_WORD_TYPES = frozenset({
+    "PERSON_NAME",
+    "ADDRESS",
+    "PHONE",
+    "AADHAAR",
+    "CREDIT_CARD",
+    "VEHICLE_REG",
+    "DRIVER_LICENSE",
+    "DATE_OF_BIRTH",
+    "BANK_ACCOUNT",
+    "ORG_NAME",
+})
+
+# Types whose values can begin or end with a symbol.
+SYMBOL_TYPES = frozenset({"PASSWORD", "API_KEY", "SECRET"})

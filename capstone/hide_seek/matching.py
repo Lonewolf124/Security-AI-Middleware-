@@ -4,6 +4,7 @@ from . import config
 
 
 SEPARATOR = r"[\s\-.]{0,2}"
+SEPARABLE_VALUE = regex.compile(r"[A-Za-z0-9\s\-.+()/]+")
 
 
 def _literal(text):
@@ -31,7 +32,10 @@ def _pattern(entity_type, needle, escape):
 
     body = None
 
-    if entity_type in config.SEPARABLE_TYPES:
+    # Only a plain ASCII number or code can be re-spaced by the provider
+    # and still be recognised. Anything else (a placeholder, a value with
+    # other punctuation, another script) is matched as written.
+    if entity_type in config.SEPARABLE_TYPES and SEPARABLE_VALUE.fullmatch(needle):
 
         chars = [char for char in needle if char.isalnum()]
 
