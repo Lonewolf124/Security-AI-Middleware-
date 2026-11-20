@@ -34,6 +34,29 @@ Use this only on systems, accounts, traffic, and networks you are
 authorized to inspect. All example secrets and PII in this README are
 synthetic test data.
 
+## New: reversible masking (`capstone/hide_seek/`)
+
+The redaction below is one-way: the AI sees `[PERSON_NAME_REDACTED]` and
+the user gets an answer about a tag. `hide_seek` replaces private values
+with realistic fakes instead, remembers each pair per chat in an encrypted
+local vault, and puts the real values back into the AI's reply, also while
+it streams. It runs on one machine, without the VM.
+
+- Works today on the claude.ai web app (typed text). claude.ai changed to
+  a protobuf interface, so the old `mitm_dlp.py` no longer masks anything
+  there; see section 11.
+- Leak rate on unseen test prompts: about 5.5%, down from about 9% with
+  the old redaction and the same model. Restored replies match the
+  original exactly.
+- Adjustable sensitivity and masking profiles (credentials, financial,
+  government ID, contact, identity).
+- The detector model is still the weakest part; a retrained model covering
+  23 types is in preparation.
+
+Setup, settings, measurements and known limitations:
+[`capstone/hide_seek/README.md`](capstone/hide_seek/README.md). Quick
+start: `cd capstone`, then `start_local.bat`.
+
 ------------------------------------------------------------------------
 
 ## 1. Project structure
@@ -443,6 +466,11 @@ IP: 192.168.1.50
 
 You should see a Claude detection and redaction decision in mitmdump.
 
+**Note (November 2026):** claude.ai now sends messages as protobuf over
+`/claudeai-rpc/`, which this handler does not recognise, so nothing is
+redacted on claude.ai through `mitm_dlp.py`. Use `hide_seek`
+(`capstone/hide_seek/README.md`), which supports the new interface.
+
 ------------------------------------------------------------------------
 
 # 12. Sample test prompts
@@ -712,4 +740,9 @@ At the time of writing, the lab has been tested for:
 
 The provider-specific request formats may change as the AI services
 update their web applications, so those handlers may need maintenance
-over time.
+over time. This has already happened for claude.ai (see section 11).
+
+Reversible masking (`capstone/hide_seek/`) has been tested live on
+claude.ai for masking, streamed restore, consistency across turns and
+provider-side storage of fakes only. Its current numbers and limitations
+are in its own README.
